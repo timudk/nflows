@@ -138,7 +138,8 @@ class MaskedResidualBlock(nn.Module):
         zero_initialization=True,
     ):
         if random_mask:
-            raise ValueError("Masked residual block can't be used with random masks.")
+            raise ValueError(
+                "Masked residual block can't be used with random masks.")
         super().__init__()
         features = len(in_degrees)
 
@@ -223,7 +224,8 @@ class MADE(nn.Module):
         use_batch_norm=False,
     ):
         if use_residual_blocks and random_mask:
-            raise ValueError("Residual blocks can't be used with random masks.")
+            raise ValueError(
+                "Residual blocks can't be used with random masks.")
         super().__init__()
 
         # Initial layer.
@@ -237,6 +239,8 @@ class MADE(nn.Module):
 
         if context_features is not None:
             self.context_layer = nn.Linear(context_features, hidden_features)
+        else:
+            self.context_layer = None
 
         self.use_residual_blocks = use_residual_blocks
         self.activation = activation
@@ -273,7 +277,7 @@ class MADE(nn.Module):
 
     def forward(self, inputs, context=None):
         temps = self.initial_layer(inputs)
-        if context is not None:
+        if context is not None and self.context_layer is not None:
             temps += self.activation(self.context_layer(context))
         if not self.use_residual_blocks:
             temps = self.activation(temps)
