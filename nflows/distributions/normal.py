@@ -3,9 +3,69 @@
 import numpy as np
 import torch
 from torch import nn
+import math
 
 from nflows.distributions.base import Distribution
 from nflows.utils import torchutils
+from nflows.utils import repeat_rows
+
+
+class DiagonalMixtureOfGaussians(Distribution):
+    """A mixture of multivariate Gaussian with diagonal covariance matrices."""
+
+    def __init__(self, shape, components):
+        super().__init__()
+        self._shape = torch.Size(shape)
+
+        self._components = components
+
+        self._means = torch.tensor(torch.randn(
+            components, *self._shape), requires_grad=True)
+        self._logvars = torch.tensor(torch.randn(
+            components, *self._shape), requires_grad=True)
+
+        self._pi_unnormalized = torch.tensor(
+            torch.randn(components), requires_grad=True)
+
+    def _log_prob(self, inputs, context):
+        # Note: the context is ignored.
+        if inputs.shape[1:] != self._shape:
+            raise ValueError(
+                "Expected input of shape {}, got {}".format(
+                    self._shape, inputs.shape[1:]
+                )
+            )
+
+        _pi = nn.functional.softmax(self._pi_unnormalized, dim=-1)
+
+        _m = torch.zeros(inputs.shape[0], self._components)
+        for i in range(self._components):
+            _m[:, i] = torch.log(_pi[i]) - 0.5 * torch.sum(np.log(2 * math.pi) +
+                                                           self._logvars[i] + (inputs - self._means[i])**2 / self._logvars[i].exp(), dim=1)
+
+        return torch.logsumexp(_m, dim=-1)
+
+    def _sample(self, num_samples, context):
+        choices = torch.distributions.categorical.Categorical(nn.functional.softmax(
+            self._pi_unnormalized, dim=-1)).sample((num_samples,)).view(-1)
+
+        if context is None:
+
+            samples = self._means[choices] + torch.exp(
+                0.5 * self._logvars[choices]) * torch.randn_like(self._logvars[choices])
+            return samples
+        else:
+            # The value of the context is ignored, only its size is taken into account.
+            context_size = context.shape[0]
+            ix = repeat_rows(torch.arange(context_size), num_samples)
+
+            chosen_means = self._means[ix, choices, :]
+            chosen_logvars = self._logvars[ix, choices, :]
+
+            samples = chosen_means + \
+                torch.exp(0.5 * chosen_logvars) * \
+                torch.randn_like(chosen_logvars)
+            return torchutils.split_leading_dim(samples, [context_size, num_samples])
 
 
 class StandardNormal(Distribution):
@@ -24,7 +84,8 @@ class StandardNormal(Distribution):
                     self._shape, inputs.shape[1:]
                 )
             )
-        neg_energy = -0.5 * torchutils.sum_except_batch(inputs ** 2, num_batch_dims=1)
+        neg_energy = -0.5 * \
+            torchutils.sum_except_batch(inputs ** 2, num_batch_dims=1)
         return neg_energy - self._log_z
 
     def _sample(self, num_samples, context):
